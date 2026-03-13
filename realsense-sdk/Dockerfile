@@ -56,10 +56,19 @@ RUN git clone \
 #   BUILD_PYTHON_BINDINGS=OFF → C++ fókusz, Python binding nem kell
 #   BUILD_SHARED_LIBS=ON     → .so könyvtár, statikus linkelés helyett
 #   CMAKE_BUILD_TYPE=Release → optimalizált, debug szimbólumok nélkül
+#
+# Teljesítmény flagek (Jetson Orin Nano — Cortex-A78AE, ARMv8.2-A):
+#   -O3             → Release default -O2 felett: loop unrolling, auto-vectorization
+#   -march=native   → Cortex-A78AE NEON/SIMD/dotprod intrinsics (build gépen detektált)
+#   -fno-plt        → PLT ugrások eliminálása .so hívásoknál (~1-2% latency)
+#   LTO             → Link-time optimization: cross-TU inlining, dead code removal
 RUN cmake \
     -S /opt/librealsense \
     -B /opt/librealsense/build \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -march=native -fno-plt" \
+    -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -march=native -fno-plt" \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
     -DFORCE_RSUSB_BACKEND=ON \
     -DBUILD_EXAMPLES=OFF \
     -DBUILD_GRAPHICAL_EXAMPLES=OFF \

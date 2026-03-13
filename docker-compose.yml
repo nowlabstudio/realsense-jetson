@@ -44,7 +44,7 @@ services:
 
   # ── 2. ROS2 Jazzy + realsense2_camera ───────────────────────────
   ros2-realsense:
-    image: ros2-realsense:r36.4.0
+    image: ros2-realsense:${L4T_TAG:-r36.4.0}
     build:
       context: .
       dockerfile: ros2-realsense/Dockerfile
@@ -52,6 +52,7 @@ services:
     container_name: ros2_realsense
     runtime: nvidia
     network_mode: host
+    ipc: host          # ROS2 zero-copy shared memory transport (nagy képekhez kritikus)
     restart: unless-stopped
     privileged: true
     devices:
@@ -76,30 +77,40 @@ services:
       - video
       - plugdev
       - "101"  # input group (hidraw hozzáférés)
+    ulimits:
+      rtprio: 99       # USB transfer threadek real-time prioritáshoz
+      memlock: -1      # memory lock korlát feloldva (zero-copy DMA)
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility,graphics
       - ROS_DOMAIN_ID=0
-    # Az entrypoint.sh már source-olja a ROS-t, ezért itt csak a launch command kell.
-    # USB 3.0 esetén 30fps depth + 30fps color + max IMU (accel 250Hz, gyro 400Hz).
+    # Depth + stereo IR + IMU — color/RGBD/PointCloud kikapcsolva
+    # A SLAM/navigáció réteg fogyasztja a topicokat és végzi a fúziót.
+    # PointCloud számítás a fogyasztó dolga (tudja milyen felbontás kell).
+    # Stereo IR (infra1+2): vizuális odometriához (ORB-SLAM3, RTAB-Map stb.)
     command: >-
       ros2 launch realsense2_camera rs_launch.py
-      enable_rgbd:=true
-      enable_sync:=true
-      align_depth.enable:=true
-      enable_color:=true
+      enable_color:=false
+      enable_rgbd:=false
+      align_depth.enable:=false
       enable_depth:=true
+      enable_infra1:=true
+      enable_infra2:=true
       enable_accel:=true
       enable_gyro:=true
       unite_imu_method:=2
       accel_fps:=250
       gyro_fps:=400
-      pointcloud.enable:=true
+      enable_sync:=true
+      pointcloud.enable:=false
       depth_module.depth_profile:=640x480x30
-      rgb_camera.color_profile:=1280x720x30
+      accelerate_gpu_with_glsl:=false
 
   # ── 3. AI / OpenCV + CUDA pipeline ──────────────────────────────
+  # Opcionális — csak explicit indításkor: docker compose --profile ai up -d
+  # Saját image build szükséges mielőtt használható: docker build -t realsense-ai:r36.4.0 ./ai-pipeline
   ai-pipeline:
+    profiles: ["ai"]
     image: realsense-ai:r36.4.0
     container_name: realsense_ai
     runtime: nvidia

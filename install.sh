@@ -21,6 +21,20 @@ L4T_TAG=""
 REALSENSE_IMAGE="realsense-sdk:2.56.5"
 ROS2_IMAGE=""
 
+# Opciók
+SKIP_ROS2=false
+VERBOSE=false
+
+# Argumentum feldolgozás
+for arg in "$@"; do
+    case "$arg" in
+        --no-ros2)  SKIP_ROS2=true ;;
+        --verbose)  VERBOSE=true ;;
+        --help)     print_help; exit 0 ;;
+        *)          echo "Ismeretlen opció: $arg"; echo "Futtasd: bash install.sh --help"; exit 1 ;;
+    esac
+done
+
 # ── Színek ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -106,6 +120,40 @@ run_show() {
     log "RUN_SHOW" "$*"
     "$@" 2>&1 | tee -a "${LOG_FILE}"
     return "${PIPESTATUS[0]}"
+}
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+print_help() {
+    echo ""
+    echo "  RealSense D435i · Jetson Orin Nano · Telepítő"
+    echo ""
+    echo "  Használat:"
+    echo "    bash install.sh [opciók]"
+    echo ""
+    echo "  Opciók:"
+    echo "    --verbose    Részletes log ablak megnyitása a telepítés alatt"
+    echo "                 (külön terminálban: tail -f logs/install_latest.log)"
+    echo "    --no-ros2    ROS2 image build kihagyása — csak realsense-sdk épül"
+    echo "                 (gyorsabb, ha ROS2 már megvan vagy nem kell)"
+    echo "    --help       Ez a súgó"
+    echo ""
+    echo "  Mit csinál:"
+    echo "    1. Docker Engine telepítés (+ Jetson iptables-nft fix)"
+    echo "    2. NVIDIA Container Toolkit (GPU elérés konténerekből)"
+    echo "    3. RealSense udev rules (USB jogosultság)"
+    echo "    4. realsense-sdk:2.56.5 image build (~30-40 perc)"
+    echo "    5. ros2-realsense image build (~50-70 perc)"
+    echo "       librealsense 2.56.4 + realsense2_camera forrásból"
+    echo "       OpenMP + GLSL GPU gyorsítás beépítve"
+    echo "    6. Szkript jogosultságok"
+    echo "    7. Validáció"
+    echo ""
+    echo "  Újrafuttatható (idempotent) — már kész lépéseket kihagyja."
+    echo ""
+    echo "  Log: logs/install_latest.log"
+    echo "  Részletes dokumentáció: README.md"
+    echo "  Gyors útmutató: ONBOARDING.md"
+    echo ""
 }
 
 # ── Fejléc ───────────────────────────────────────────────────────────────────
@@ -423,156 +471,62 @@ build_realsense_image() {
     log "INFO" "realsense build OK: ${REALSENSE_IMAGE}"
 }
 
-# ── 6. FÁZIS: ROS2 + RealSense image ──────────────────────────────────────────
+# ── 5. FÁZIS: ROS2 + RealSense image ──────────────────────────────────────────
 build_ros2_realsense_image() {
-    section "6. Fázis: ROS2 Jazzy + realsense2_camera Image"
+    section "5. Fázis: ROS2 Jazzy + realsense2_camera Image"
 
-    # Lehetséges tag variációk (Jazzyhoz nincs dustynv pre-built)
-    local candidates=(
-        "ros2-realsense:${L4T_TAG}"
-    )
+    local ros2_image="ros2-realsense:${L4T_TAG}"
 
     # Már megvan lokálisan?
-    for img in "${candidates[@]}"; do
-        if sudo docker images --format "{{.Repository}}:{{.Tag}}" | grep -qF "${img}" 2>/dev/null || false; then
-            skip "ROS2+realsense image már létezik: ${img}"
-            ROS2_IMAGE="${img}"
-            log "INFO" "ROS2 image skip: ${img}"
-            return 0
-        fi
-    done
+    if sudo docker images --format "{{.Repository}}:{{.Tag}}" \
+            | grep -qF "${ros2_image}"; then
+        skip "ROS2+realsense image már létezik: ${ros2_image}"
+        ROS2_IMAGE="${ros2_image}"
+        log "INFO" "ROS2 image skip: ${ros2_image}"
+        return 0
+    fi
 
-    # ROS2 Jazzy + realsense2_camera Dockerfile buildelés (ubuntu:24.04 alapon)
-    step "realsense2_camera ROS2 Jazzy node image buildelés..."
-    info "Ez ~15-25 percig tarthat (ubuntu:24.04 + ROS2 Jazzy + realsense2_camera)"
+    # Dockerfile ellenőrzés — a repóban kell lennie
+    if [[ ! -f "${SCRIPT_DIR}/ros2-realsense/Dockerfile" ]]; then
+        fail "ros2-realsense/Dockerfile nem található — a teljes repo szükséges"
+    fi
 
-    local ros2_rs_dir="${SCRIPT_DIR}/ros2-realsense"
-    mkdir -p "${ros2_rs_dir}"
+    step "ROS2 Jazzy + realsense2_camera image buildelés..."
+    info "Várható idő: ~30-45 perc (ubuntu:24.04 + ROS2 Jazzy + librealsense forrásból)"
+    info "Valós idejű log: tail -f ${LOG_FILE}"
 
-    cat > "${ros2_rs_dir}/Dockerfile" << DOCKERFILE_EOF
-# ROS2 Jazzy + realsense2_camera node
-# Ubuntu 24.04 (Noble) alapon — fut Jetson 22.04-es hoston Dockerben
-FROM ubuntu:24.04
+    if ! sudo docker build \
+        --network=host \
+        -t "${ros2_image}" \
+        -f "${SCRIPT_DIR}/ros2-realsense/Dockerfile" \
+        "${SCRIPT_DIR}" >> "${LOG_FILE}" 2>&1; then
+        fail "ros2-realsense image build sikertelen — részletek: ${LOG_FILE}"
+    fi
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV ROS_DISTRO=jazzy
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility
-
-# Alap csomagok + ROS2 Jazzy repo
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    curl gnupg2 lsb-release ca-certificates \\
-    && mkdir -p /etc/apt/keyrings \\
-    && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \\
-       | gpg --dearmor -o /etc/apt/keyrings/ros-archive-keyring.gpg \\
-    && echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/ros-archive-keyring.gpg] \\
-       http://packages.ros.org/ros2/ubuntu noble main" \\
-       | tee /etc/apt/sources.list.d/ros2.list \\
-    && apt-get update && apt-get install -y --no-install-recommends \\
-       ros-jazzy-ros-base \\
-       ros-jazzy-realsense2-camera \\
-       ros-jazzy-realsense2-description \\
-       ros-jazzy-image-transport \\
-       ros-jazzy-cv-bridge \\
-       ros-jazzy-tf2-ros \\
-       ros-jazzy-diagnostic-updater \\
-       python3-colcon-common-extensions \\
-       python3-rosdep \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Intel RealSense apt repo (Noble/Ubuntu 24.04, arm64)
-RUN mkdir -p /etc/apt/keyrings \\
-    && curl -sSf https://librealsense.realsenseai.com/Debian/librealsenseai.asc \\
-       | gpg --dearmor | tee /etc/apt/keyrings/librealsenseai.gpg > /dev/null \\
-    && echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/librealsenseai.gpg] https://librealsense.realsenseai.com/Debian/apt-repo noble main" \\
-       | tee /etc/apt/sources.list.d/librealsense.list \\
-    && apt-get update \\
-    && apt-get install -y --no-install-recommends \\
-       librealsense2 librealsense2-utils librealsense2-dev \\
-    || true \\
-    && rm -rf /var/lib/apt/lists/*
-
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["ros2", "launch", "realsense2_camera", "rs_launch.py", \\
-     "enable_rgbd:=true", \\
-     "enable_sync:=true", \\
-     "align_depth.enable:=true", \\
-     "enable_color:=true", \\
-     "enable_depth:=true", \\
-     "enable_accel:=true", \\
-     "enable_gyro:=true", \\
-     "unite_imu_method:=2", \\
-     "pointcloud.enable:=true", \\
-     "depth_module.depth_profile:=640x480x30", \\
-     "rgb_camera.color_profile:=1280x720x30"]
-DOCKERFILE_EOF
-
-    cat > "${ros2_rs_dir}/entrypoint.sh" << 'ENTRY_EOF'
-#!/bin/bash
-source /opt/ros/jazzy/setup.bash
-exec "$@"
-ENTRY_EOF
-
-    run sudo docker build --network=host -t "ros2-realsense:${L4T_TAG}" "${ros2_rs_dir}"
-
-    ROS2_IMAGE="ros2-realsense:${L4T_TAG}"
+    ROS2_IMAGE="${ros2_image}"
     ok "ROS2+realsense image kész: ${ROS2_IMAGE}"
     log "INFO" "ROS2 image kész: ${ROS2_IMAGE}"
+
+    # .env fájl írása — docker-compose.yml L4T_TAG változót ebből olvassa
+    echo "L4T_TAG=${L4T_TAG}" > "${SCRIPT_DIR}/.env"
+    log "INFO" ".env írva: L4T_TAG=${L4T_TAG}"
 }
 
 
 
-# ── 9. FÁZIS: Szkriptek létrehozása ────────────────────────────────────────────
-create_scripts() {
-    section "9. Fázis: Kényelmi szkriptek"
+# ── 6. FÁZIS: Szkriptek jogosultság ─────────────────────────────────────────────
+ensure_scripts() {
+    section "6. Fázis: Kényelmi szkriptek"
 
-    # start.sh
-    cat > "${SCRIPT_DIR}/scripts/start.sh" << 'SCRIPT_EOF'
-#!/bin/bash
-cd "$(dirname "$0")/.."
-echo "RealSense stack indítása..."
-docker compose up -d
-echo ""
-echo "Státusz:"
-docker compose ps
-echo ""
-echo "Logs (Ctrl+C kilépéshez):"
-echo "  docker compose logs -f ros2-realsense"
-SCRIPT_EOF
+    if [[ ! -d "${SCRIPT_DIR}/scripts" ]]; then
+        fail "scripts/ könyvtár nem található — a teljes repo szükséges"
+    fi
 
-    # stop.sh
-    cat > "${SCRIPT_DIR}/scripts/stop.sh" << 'SCRIPT_EOF'
-#!/bin/bash
-cd "$(dirname "$0")/.."
-echo "RealSense stack leállítása..."
-docker compose down
-SCRIPT_EOF
-
-    # status.sh
-    cat > "${SCRIPT_DIR}/scripts/status.sh" << 'SCRIPT_EOF'
-#!/bin/bash
-cd "$(dirname "$0")/.."
-echo "=== Konténer státusz ==="
-docker compose ps
-echo ""
-echo "=== GPU memória ==="
-docker exec realsense_sdk nvidia-smi 2>/dev/null || echo "SDK konténer nem fut"
-echo ""
-echo "=== ROS2 topicok ==="
-docker exec ros2_realsense bash -c \
-    "source /opt/ros/jazzy/setup.bash && ros2 topic list 2>/dev/null" \
-    2>/dev/null || echo "ROS2 konténer nem fut"
-SCRIPT_EOF
-
-    chmod +x "${SCRIPT_DIR}/scripts/"*.sh
-    ok "Szkriptek létrehozva: start.sh, stop.sh, status.sh"
-    log "INFO" "Szkriptek kész"
+    chmod +x "${SCRIPT_DIR}/scripts/"*.sh 2>/dev/null || true
+    ok "Szkriptek futtathatók: $(ls "${SCRIPT_DIR}/scripts/"*.sh 2>/dev/null | xargs -I{} basename {} | tr '\n' ' ')"
+    log "INFO" "Szkriptek jogosultság kész"
 }
 
-# ── 10. FÁZIS: Validáció ───────────────────────────────────────────────────────
 # ── 7. FÁZIS: Validáció ────────────────────────────────────────────────────────
 run_validation() {
     section "7. Fázis: Validáció"
@@ -719,22 +673,33 @@ open_log_window() {
 main() {
     print_header
 
-    # Log ablak megnyitása a háttérben
-    open_log_window
+    # Log ablak megnyitása a háttérben (csak --verbose esetén)
+    if [[ "${VERBOSE}" == true ]]; then
+        open_log_window
+    else
+        info "Log: ${LOG_FILE}"
+        info "Részletes log követése: tail -f ${LOG_FILE}"
+        info "Verbose mód: bash install.sh --verbose"
+    fi
 
     # Elvégzett lépések logolása
     log "INFO" "Telepítés kezdete: $(date)"
     log "INFO" "Felhasználó: $(whoami)"
     log "INFO" "Munkakönyvtár: ${SCRIPT_DIR}"
 
-    check_prerequisites           # 1. előfeltételek (git, curl, stb.)
-    install_docker                # 2. Docker Engine
-    install_nvidia_container_toolkit  # 3. nvidia-container-toolkit
-    install_udev_rules            # 4. RealSense udev rules
-    build_realsense_image         # 5. realsense-sdk:2.56.5 image build (~30 perc)
-    build_ros2_realsense_image    # 6. ROS2 Jazzy + realsense2_camera
-    create_scripts                # 7. kényelmi szkriptek (start/stop/status)
-    run_validation                # 8. validáció
+    check_prerequisites                # előfeltételek
+    install_docker                     # 1. Docker Engine
+    install_nvidia_container_toolkit   # 2. nvidia-container-toolkit
+    install_udev_rules                 # 3. RealSense udev rules
+    build_realsense_image              # 4. realsense-sdk:2.56.5 image (~30 perc)
+    if [[ "${SKIP_ROS2}" == false ]]; then
+        build_ros2_realsense_image     # 5. ROS2 Jazzy + realsense2_camera (~30 perc)
+    else
+        warn "ROS2 image build kihagyva (--no-ros2)"
+        log "INFO" "ROS2 build skipped (--no-ros2)"
+    fi
+    ensure_scripts                     # 6. szkript jogosultságok
+    run_validation                     # 7. validáció
     print_summary
 
     echo ""

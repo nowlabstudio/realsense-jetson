@@ -121,30 +121,28 @@ docker exec -it realsense_sdk bash -c "
 ki van kapcsolva — a konténer C++ fejlesztésre optimalizált.
 
 ### `ros2-realsense`
-ROS2 Jazzy realsense2_camera node. Publikálja:
+ROS2 Jazzy realsense2_camera node (forrásból fordítva, OpenMP + GLSL). Publikálja:
 
 | Topic | Típus | Leírás |
 |-------|-------|---------|
-| `/camera/color/image_raw` | sensor_msgs/Image | RGB 1280×720 @30fps |
-| `/camera/depth/image_rect_raw` | sensor_msgs/Image | Depth 640×480 @30fps |
-| `/camera/depth/color/points` | sensor_msgs/PointCloud2 | XYZRGB pontfelhő |
-| `/camera/imu` | sensor_msgs/Imu | Accel(63Hz) + Gyro(200Hz) |
-| `/camera/infra1/image_rect_raw` | sensor_msgs/Image | IR bal |
-| `/camera/infra2/image_rect_raw` | sensor_msgs/Image | IR jobb |
+| `/camera/camera/depth/image_rect_raw` | sensor_msgs/Image | Depth 640×480 @30fps |
+| `/camera/camera/infra1/image_rect_raw` | sensor_msgs/Image | IR bal @30fps |
+| `/camera/camera/infra2/image_rect_raw` | sensor_msgs/Image | IR jobb @30fps |
+| `/camera/camera/imu` | sensor_msgs/Imu | Fúzionált IMU ~200Hz |
+| `/camera/camera/gyro/sample` | sensor_msgs/Imu | Nyers giroszkóp 400Hz |
+| `/camera/camera/accel/sample` | sensor_msgs/Imu | Nyers gyorsulásmérő 250Hz |
+
+> Color, RGBD, PointCloud ki van kapcsolva — a SLAM stack végzi a feldolgozást.
 
 ```bash
-# Topicok listája
-docker exec ros2_realsense bash -c \
-    "source /opt/ros/jazzy/setup.bash && ros2 topic list"
+# Topicok listája (entrypoint automatikusan source-olja a workspace-t)
+docker exec ros2_realsense ros2 topic list
 
 # IMU live
-docker exec ros2_realsense bash -c \
-    "source /opt/ros/jazzy/setup.bash && ros2 topic echo /camera/imu --once"
+docker exec ros2_realsense ros2 topic echo /camera/camera/imu --once
 
-# PointCloud info
-docker exec ros2_realsense bash -c \
-    "source /opt/ros/jazzy/setup.bash && \
-     ros2 topic info /camera/depth/color/points"
+# Depth topic info
+docker exec ros2_realsense ros2 topic info /camera/camera/depth/image_rect_raw
 ```
 
 ---
@@ -214,6 +212,26 @@ sudo systemctl restart docker
 ### IMU stream sikertelen
 Az IMU elérhető frekvenciák: Accel **63 Hz** vagy **250 Hz**, Gyro **200 Hz** vagy **400 Hz**.
 Ne kérd a 100 Hz-es accel streamet — az nem létezik ezen a hardveren.
+
+### ⚠️ IR emitter és vizuális odometria konfliktus
+A D435i IR lézer dot projector (emitter) segíti a depth számítást texturálaltan felületeken,
+de **zavarhatja az IR-alapú vizuális odometriát** (ORB-SLAM3, RTAB-Map feature matching).
+
+| Emitter állapot | Depth minőség | Vizuális odometria |
+|---|---|---|
+| ON (alapértelmezett) | jobb texturálaltan felületeken | feature detection romlik |
+| OFF | gyengébb texturálaltan | tiszta IR kép, jobb feature matching |
+
+Kikapcsolás futásidőben (ROS2 paraméter):
+```bash
+ros2 param set /camera/camera depth_module.emitter_enabled false
+```
+Vagy a launch command-ban:
+```
+depth_module.emitter_enabled:=false
+```
+**Ajánlott:** teszteld mindkét módban a konkrét környezetedben — beltérben (sok textúra)
+az emitter általában elhagyható, kültéren vagy sima falaknál szükség lehet rá.
 
 ### RealSense "No device connected"
 ```bash

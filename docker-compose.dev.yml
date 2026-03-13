@@ -1,0 +1,45 @@
+# =============================================================================
+# RealSense Dev Stack — FEJLESZTÉSI / TESZTELÉSI ESZKÖZÖK
+# Alap stacktől független, külön futtatható
+#
+# Indítás: bash scripts/viewer.sh
+# Kézi:    docker compose -f docker-compose.dev.yml up realsense-viewer
+# =============================================================================
+
+name: realsense-dev
+
+services:
+
+  # ── realsense-viewer (GUI) ───────────────────────────────────────────────────
+  # Interaktív GUI stream viewer — teszteléshez és fejlesztéshez
+  # Előfeltétel: xhost +local:docker (a scripts/viewer.sh ezt elvégzi)
+  realsense-viewer:
+    image: realsense-viewer:2.56.5
+    build:
+      context: .
+      dockerfile: realsense-viewer/Dockerfile
+      network: host
+    container_name: realsense_viewer
+    runtime: nvidia
+    network_mode: host
+    restart: "no"
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+    volumes:
+      - /run/udev:/run/udev:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    group_add:
+      - video
+      - plugdev
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all,graphics,display,utility
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1

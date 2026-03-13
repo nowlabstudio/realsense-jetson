@@ -4,78 +4,96 @@
 
 ## Mi ez?
 
-**Intel RealSense D435i** mélységi kamera teljes Docker infrastruktúrája egy
-**Jetson Orin Nano** (JetPack 6.2) gépen.
+**Intel RealSense D435i** mélységi kamera Docker infrastruktúrája
+**Jetson Orin Nano** (JetPack 6.2) gépen, SLAM/navigáció adatforrásként.
 
-Elérhető: RGB + Depth (RGBD) + IMU (accel/gyro) + PointCloud + ROS2
+Kimenet: Depth + Stereo IR + IMU → ROS2 topicok → SLAM / sensor fusion / obstacle avoidance
 
-**librealsense verzió:** 2.56.5 (forrásból fordítva, RSUSB backend)
+**librealsense:** 2.56.5 (SDK), 2.56.4 (ROS2) · **Backend:** RSUSB (kernel modul nélkül)
 
 ---
 
-## Egyszer csináld meg (telepítés)
+## Telepítés (egyszer)
 
 ```bash
 cd ~/realsense-docker
 bash install.sh
 ```
 
-Ez automatikusan:
-- Telepíti a Dockert
-- Beállítja a GPU (CUDA) hozzáférést konténerekből
-- Telepíti az udev rules-t (USB jogosultság)
-- Lefordítja a librealsense 2.56.5 SDK-t forrásból (~25-40 perc)
-- Lefordítja a ROS2 Jazzy + realsense2_camera image-et
-- Mindent logol → `logs/install_latest.log`
+Opciók:
+```
+--verbose    Log ablak megnyitása külön terminálban
+--no-ros2    ROS2 image build kihagyása (csak SDK)
+--help       Részletes súgó
+```
+
+Telepítési idő: ~80-110 perc (ARM64, forrásból fordít mindent)
 
 ---
 
 ## Napi használat
 
 ```bash
-# Indítás
-bash scripts/start.sh
-
-# Leállítás
-bash scripts/stop.sh
-
-# Mi fut?
-bash scripts/status.sh
+bash scripts/start.sh     # stack indítás
+bash scripts/stop.sh      # leállítás
+bash scripts/status.sh    # státusz + GPU + ROS2 topicok
 ```
 
 ---
 
-## 2 konténer, 2 szerepkör
+## Konténerek
 
 ```
 realsense_sdk      → C++ fejlesztés, raw SDK, rs-* eszközök
-ros2_realsense     → ROS2 topicok (SLAM, Nav2, rviz2)
+ros2_realsense     → ROS2 Jazzy, kamera adatokat publikálja
 ```
 
 ---
 
-## Gyors tesztek
+## ROS2 topicok
 
 ```bash
-# Minden OK?
-bash scripts/test_realsense.sh
+docker exec ros2_realsense bash -c \
+  "source /opt/ros2-camera-install/setup.bash && ros2 topic list"
+```
 
-# Csak gyorsan
-bash scripts/test_realsense.sh --quick
+| Topic | Tartalom | Ráta |
+|-------|---------|------|
+| `/camera/camera/depth/image_rect_raw` | Mélységi kép (Z16) | 30fps |
+| `/camera/camera/infra1/image_rect_raw` | Bal IR (vizuális odometria) | 30fps |
+| `/camera/camera/infra2/image_rect_raw` | Jobb IR (vizuális odometria) | 30fps |
+| `/camera/camera/imu` | Fúzionált IMU (accel+gyro) | ~200Hz |
+| `/camera/camera/gyro/sample` | Nyers giroszkóp | 400Hz |
+| `/camera/camera/accel/sample` | Nyers gyorsulásmérő | 250Hz |
 
-# Kamera látszik-e?
-lsusb | grep Intel
+> Color, RGBD, PointCloud **ki van kapcsolva** — a fogyasztó SLAM stack végzi a feldolgozást.
 
-# Közvetlen SDK teszt
+---
+
+## Tesztek
+
+```bash
+bash scripts/test_realsense.sh           # teljes (10 teszt)
+bash scripts/test_realsense.sh --quick   # gyors (6 teszt)
+
+lsusb | grep Intel                       # kamera látszik?
 docker exec realsense_sdk rs-enumerate-devices --compact
 ```
 
 ---
 
-## Kamera elérése C++-ból
+## Fejlesztői eszközök (dev)
 
-A `realsense_sdk` konténerben teljes C++ toolchain (gcc, cmake, pkg-config) és
-a librealsense headers (`/usr/local/include/librealsense2/`) elérhetők.
+```bash
+bash scripts/viewer.sh       # realsense-viewer GUI (leállítja a ros2-t, majd visszaindítja)
+bash scripts/viewer-debug.sh # viewer + teljes hibanapló a terminálban
+```
+
+A viewer külön image (`realsense-viewer:2.56.5`) — nincs hatással a production stackre.
+
+---
+
+## C++ fejlesztés (realsense_sdk konténer)
 
 ```bash
 docker exec -it realsense_sdk bash
@@ -93,104 +111,81 @@ target_link_libraries(myapp realsense2::realsense2)
 rs2::pipeline pipe;
 rs2::config cfg;
 cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
-cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_YUYV, 6);
+cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F, 250);
+cfg.enable_stream(RS2_STREAM_GYRO,  RS2_FORMAT_MOTION_XYZ32F, 400);
 pipe.start(cfg);
 
 auto frames = pipe.wait_for_frames();
 auto depth  = frames.get_depth_frame();
-float dist  = depth.get_distance(320, 240);
-// dist = távolság méterben a kép közepén
+float dist  = depth.get_distance(320, 240); // méter
 pipe.stop();
 ```
 
-**IMU streamek:**
-```cpp
-cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F, 63);   // 63 vagy 250 Hz
-cfg.enable_stream(RS2_STREAM_GYRO,  RS2_FORMAT_MOTION_XYZ32F, 200);  // 200 vagy 400 Hz
-```
-
----
-
-## ROS2 topicok (gyors lista)
-
 ```bash
-docker exec ros2_realsense bash -c \
-  "source /opt/ros/jazzy/setup.bash && ros2 topic list"
-```
-
-| Topic | Tartalom |
-|-------|---------|
-| `/camera/color/image_raw` | RGB kép |
-| `/camera/depth/image_rect_raw` | Mélységi kép |
-| `/camera/depth/color/points` | 3D pontfelhő |
-| `/camera/imu` | IMU (accel + gyro) |
-
----
-
-## Saját C++ alkalmazás futtatása
-
-```bash
-# Fájl másolása konténerbe
+# Saját alkalmazás fordítása
 docker cp myapp.cpp realsense_sdk:/app/
-
-# Fordítás és futtatás a konténerben
-docker exec -it realsense_sdk bash -c "
-  g++ -O2 /app/myapp.cpp -o /app/myapp \$(pkg-config --cflags --libs realsense2) &&
-  /app/myapp"
+docker exec -it realsense_sdk bash -c \
+  "g++ -O3 /app/myapp.cpp -o /app/myapp \$(pkg-config --cflags --libs realsense2) && /app/myapp"
 ```
 
 ---
 
-## USB sávszélesség korlát
+## USB sávszélesség
 
-Ha a kamera **USB 2.0 (480M)** sebességgel csatlakozik (pl. telefon töltőkábellel):
-- Depth: 640×480 @30fps ✓
-- Color: max 640×480 @6fps
-- IMU: teljes sebességgel ✓
+A J401 board összes USB portja egy hubon osztozik (10 Gbps upstream).
 
-**USB 3.0 adatkábellel** (5Gbps): Color 1280×720 @30fps is elérhető.
+| Konfiguráció | Igény | Fér el? |
+|---|---|---|
+| 1× depth + IR + IMU | ~420 Mbps | ✓ |
+| 4× depth + IR + IMU | ~1.7 Gbps | ✓ |
+| 1× depth + color + IR + IMU | ~1 Gbps | ✓ |
+
+Aktuális kábel: **USB 3.2 Gen 2 (10 Gbps)** — ellenőrzés:
+```bash
+docker exec realsense_sdk rs-enumerate-devices --compact | grep "Usb Type"
+# → Usb Type Descriptor: 3.2
+```
 
 ---
 
 ## Ha valami nem megy
 
 ```bash
-# Log ellenőrzés
-tail -50 logs/install_latest.log
+tail -50 logs/install_latest.log      # telepítési log
+docker compose restart ros2-realsense # konténer újraindítás
+sudo udevadm control --reload-rules && sudo udevadm trigger  # USB jogosultság
+docker compose down && docker compose up -d  # teljes reset
+```
 
-# Konténer újraindítás
-docker compose restart realsense-sdk
+---
 
-# USB jogosultság reset
-sudo udevadm trigger
+## Fájlstruktúra
 
-# Teljes reset
-docker compose down
-docker compose up -d
+```
+~/realsense-docker/
+├── install.sh                  ← Telepítő (idempotent, --help, --verbose, --no-ros2)
+├── docker-compose.yml          ← Production stack
+├── docker-compose.dev.yml      ← Dev eszközök (viewer)
+├── README.md                   ← Részletes dokumentáció
+├── ONBOARDING.md               ← Ez a fájl
+├── logs/                       ← Telepítési és tesztelési naplók
+├── scripts/
+│   ├── start.sh / stop.sh / status.sh
+│   ├── test_realsense.sh
+│   ├── viewer.sh               ← GUI viewer (dev)
+│   └── viewer-debug.sh         ← Viewer + hibanapló
+├── realsense-sdk/              ← librealsense 2.56.5 Dockerfile
+├── ros2-realsense/             ← ROS2 Jazzy + realsense2_camera Dockerfile
+└── realsense-viewer/           ← Viewer Dockerfile (dev only)
 ```
 
 ---
 
 ## Rendszer lábnyom
 
-| Elem | Méret |
-|------|-------|
-| realsense-sdk:2.56.5 image | ~500 MB |
-| ros2-realsense image | ~4-6 GB |
+| Image | Méret |
+|-------|-------|
+| realsense-sdk:2.56.5 | ~500 MB |
+| ros2-realsense:r36.4.0 | ~3-4 GB |
+| realsense-viewer:2.56.5 | ~1.5 GB |
 | Natív telepítés | <500 MB |
-
----
-
-## Fájlok
-
-```
-~/realsense-docker/
-├── install.sh              ← Telepítő (idempotent)
-├── docker-compose.yml      ← Stack
-├── README.md               ← Részletes dok.
-├── ONBOARDING.md           ← Ez a fájl
-├── logs/                   ← Naplók
-├── scripts/                ← Kényelmi szkriptek
-├── realsense-sdk/          ← SDK Dockerfile (2.56.5, forrásból)
-└── ros2-realsense/         ← ROS2 Jazzy Dockerfile
-```
