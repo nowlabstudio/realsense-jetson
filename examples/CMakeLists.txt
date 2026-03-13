@@ -4,7 +4,7 @@ project(realsense_d435i_examples)
 # ── C++17 ─────────────────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-O2 -Wall -Wextra)
+add_compile_options(-O3 -march=native -Wall -Wextra)
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 find_package(ament_cmake REQUIRED)
