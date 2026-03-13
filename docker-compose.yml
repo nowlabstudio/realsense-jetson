@@ -1,0 +1,124 @@
+# RealSense D435i Docker Stack
+# Jetson Orin Nano · L4T r36.4.0 · JetPack 6.2
+# Indítás:  docker compose up -d
+# Leállítás: docker compose down
+
+services:
+
+  # ── 1. librealsense2 SDK 2.56.5 ──────────────────────────────────
+  # RSUSB backend (kernel modul nélkül, Docker-barát)
+  # Build: docker compose build realsense-sdk
+  realsense-sdk:
+    image: realsense-sdk:2.56.5
+    build:
+      context: .
+      dockerfile: realsense-sdk/Dockerfile
+      network: host
+    container_name: realsense_sdk
+    runtime: nvidia
+    network_mode: host
+    restart: unless-stopped
+    privileged: false
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+    volumes:
+      - /run/udev:/run/udev:ro
+    group_add:
+      - video
+      - plugdev
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility
+    healthcheck:
+      test: ["CMD", "rs-enumerate-devices", "--compact"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── 2. ROS2 Jazzy + realsense2_camera ───────────────────────────
+  ros2-realsense:
+    image: ros2-realsense:r36.4.0
+    build:
+      context: .
+      dockerfile: ros2-realsense/Dockerfile
+      network: host
+    container_name: ros2_realsense
+    runtime: nvidia
+    network_mode: host
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+      - /dev/hidraw0:/dev/hidraw0
+      - /dev/hidraw1:/dev/hidraw1
+      - /dev/hidraw2:/dev/hidraw2
+      - /dev/hidraw3:/dev/hidraw3
+      - /dev/hidraw4:/dev/hidraw4
+      - /dev/hidraw5:/dev/hidraw5
+      - /dev/hidraw6:/dev/hidraw6
+    volumes:
+      - /run/udev:/run/udev:ro
+      - /tmp/.ros:/tmp/.ros
+    group_add:
+      - video
+      - plugdev
+      - "101"  # input group (hidraw hozzáférés)
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROS_DOMAIN_ID=0
+    # Az entrypoint.sh már source-olja a ROS-t, ezért itt csak a launch command kell.
+    # USB 3.0 esetén 30fps depth + 30fps color + max IMU (accel 250Hz, gyro 400Hz).
+    command: >-
+      ros2 launch realsense2_camera rs_launch.py
+      enable_rgbd:=true
+      enable_sync:=true
+      align_depth.enable:=true
+      enable_color:=true
+      enable_depth:=true
+      enable_accel:=true
+      enable_gyro:=true
+      unite_imu_method:=2
+      accel_fps:=250
+      gyro_fps:=400
+      pointcloud.enable:=true
+      depth_module.depth_profile:=640x480x30
+      rgb_camera.color_profile:=1280x720x30
+
+  # ── 3. AI / OpenCV + CUDA pipeline ──────────────────────────────
+  ai-pipeline:
+    image: realsense-ai:r36.4.0
+    container_name: realsense_ai
+    runtime: nvidia
+    network_mode: host
+    restart: unless-stopped
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+    volumes:
+      - /run/udev:/run/udev:ro
+    group_add:
+      - video
+      - plugdev
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    command: python3 pipeline.py
