@@ -1,58 +1,25 @@
 # RealSense D435i Docker Stack
-# Jetson Orin Nano · L4T r36.4.0 · JetPack 6.2
+# Jetson Orin Nano 8GB · JetPack 6.x · ROS2 Jazzy
+#
+# librealsense RSUSB backenddel (forrásból) + realsense-ros (colcon overlay)
+# L4T kernel nem tartalmazza a hid_sensor_custom modult → RSUSB = standard Jetson megoldás
+#
 # Indítás:  docker compose up -d
-# Leállítás: docker compose down
+# Build:    docker compose build
+# Logok:    docker compose logs -f ros2-realsense
 
 services:
 
-  # ── 1. librealsense2 SDK 2.56.5 ──────────────────────────────────
-  # RSUSB backend (kernel modul nélkül, Docker-barát)
-  # Build: docker compose build realsense-sdk
-  realsense-sdk:
-    image: realsense-sdk:2.56.5
-    build:
-      context: .
-      dockerfile: realsense-sdk/Dockerfile
-      network: host
-    container_name: realsense_sdk
-    runtime: nvidia
-    network_mode: host
-    restart: unless-stopped
-    privileged: false
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
-      - /dev/video4:/dev/video4
-      - /dev/video5:/dev/video5
-    volumes:
-      - /run/udev:/run/udev:ro
-    group_add:
-      - video
-      - plugdev
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility
-    healthcheck:
-      test: ["CMD", "rs-enumerate-devices", "--compact"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  # ── 2. ROS2 Jazzy + realsense2_camera ───────────────────────────
   ros2-realsense:
-    image: ros2-realsense:${L4T_TAG:-r36.4.0}
+    image: ros2-realsense:jazzy-isaac
     build:
       context: .
-      dockerfile: ros2-realsense/Dockerfile
+      dockerfile: Dockerfile
       network: host
     container_name: ros2_realsense
     runtime: nvidia
     network_mode: host
-    ipc: host          # ROS2 zero-copy shared memory transport (nagy képekhez kritikus)
+    ipc: host
     restart: unless-stopped
     privileged: true
     devices:
@@ -76,20 +43,23 @@ services:
     group_add:
       - video
       - plugdev
-      - "101"  # input group (hidraw hozzáférés)
+      - "101"    # input group (hidraw hozzáférés)
     ulimits:
       rtprio: 99       # USB transfer threadek real-time prioritáshoz
-      memlock: -1      # memory lock korlát feloldva (zero-copy DMA)
+      memlock: -1      # memory lock korlát feloldva
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility,graphics
       - ROS_DOMAIN_ID=0
-    # Depth + stereo IR + IMU — color/RGBD/PointCloud kikapcsolva
-    # A SLAM/navigáció réteg fogyasztja a topicokat és végzi a fúziót.
-    # PointCloud számítás a fogyasztó dolga (tudja milyen felbontás kell).
-    # Stereo IR (infra1+2): vizuális odometriához (ORB-SLAM3, RTAB-Map stb.)
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    # Depth + stereo IR + IMU
+    # color/RGBD/PointCloud kikapcsolva — fogyasztó dolga (Nav2, SLAM)
     command: >-
+      bash -c "export PATH=/opt/ros/jazzy/install/bin:$$PATH &&
+      source /opt/ros/jazzy/setup.bash &&
+      source /opt/realsense_ws/install/setup.bash &&
       ros2 launch realsense2_camera rs_launch.py
+      initial_reset:=false
       enable_color:=false
       enable_rgbd:=false
       align_depth.enable:=false
@@ -104,32 +74,4 @@ services:
       enable_sync:=true
       pointcloud.enable:=false
       depth_module.depth_profile:=640x480x30
-      accelerate_gpu_with_glsl:=false
-
-  # ── 3. AI / OpenCV + CUDA pipeline ──────────────────────────────
-  # Opcionális — csak explicit indításkor: docker compose --profile ai up -d
-  # Saját image build szükséges mielőtt használható: docker build -t realsense-ai:r36.4.0 ./ai-pipeline
-  ai-pipeline:
-    profiles: ["ai"]
-    image: realsense-ai:r36.4.0
-    container_name: realsense_ai
-    runtime: nvidia
-    network_mode: host
-    restart: unless-stopped
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-      - /dev/video0:/dev/video0
-      - /dev/video1:/dev/video1
-      - /dev/video2:/dev/video2
-      - /dev/video3:/dev/video3
-      - /dev/video4:/dev/video4
-      - /dev/video5:/dev/video5
-    volumes:
-      - /run/udev:/run/udev:ro
-    group_add:
-      - video
-      - plugdev
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-    command: python3 pipeline.py
+      accelerate_gpu_with_glsl:=false"
