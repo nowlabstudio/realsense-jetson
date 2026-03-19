@@ -1,0 +1,31 @@
+# RealSense D435i node paraméter konfiguráció — Audit #7 Stress Test
+#
+# DIAGNÓZIS (saját mérések alapján):
+#   A realsense2_camera két szintű PointCloud paramétert kezel:
+#   1. pointcloud.enable: true   → létrehozza a PointcloudPublisher plugin objektumot
+#   2. pointcloud__neon_.enable: true → a plugin maga engedélyezi a frame-feldolgozást
+#      (a plugin saját deklarált paramétere, default: false)
+#
+#   Mindkettő szükséges! Ha csak #1 van beállítva, a publisher létrejön
+#   (topic látható), de üzenetek nem kerülnek ki (a plugin sleep-el).
+#   Ha csak #2 van beállítva runtime (ros2 param set), a plugin nem indul
+#   el mert a plugin objektum sem jött létre.
+#
+# MIÉRT FLAT YAML (namespace header NÉLKÜL):
+#   A yaml_to_dict() nested YAML-ból mélyen beágyazott kulcsot csinál:
+#   "/camera/camera.ros__parameters.pointcloud.enable" → nem a várt "pointcloud.enable"
+#   Flat kulcsokkal a dict közvetlenül merge-elhető a launch args params-szal.
+#
+# config_file betöltési sorrend: parameters=[launch_params, config_file_params]
+#   → config_file FELÜLÍRJA a launch args default értékeit (magasabb prioritás).
+#
+# IMU LETILTÁS: "Motion Module force pause" hardware error stress teszten.
+
+pointcloud.enable: true
+pointcloud__neon_.enable: true
+pointcloud__neon_.ordered_pc: false
+pointcloud__neon_.stream_filter: 2
+pointcloud__neon_.stream_index_filter: 0
+pointcloud__neon_.allow_no_texture_points: false
+enable_accel: false
+enable_gyro: false

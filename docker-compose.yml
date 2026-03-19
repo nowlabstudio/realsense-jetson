@@ -40,6 +40,8 @@ services:
     volumes:
       - /run/udev:/run/udev:ro
       - /tmp/.ros:/tmp/.ros
+      - ../talicska-robot/cyclonedds.xml:/cyclonedds.xml:ro
+      - ./realsense_params.yaml:/realsense_params.yaml:ro
     group_add:
       - video
       - plugdev
@@ -52,26 +54,23 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all,compute,video,utility,graphics
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-    # Depth + stereo IR + IMU
-    # color/RGBD/PointCloud kikapcsolva — fogyasztó dolga (Nav2, SLAM)
+      - CYCLONEDDS_URI=file:///cyclonedds.xml
+    # Audit #7 Stress Test — RGB + Depth + PointCloud aktív, IMU letiltva
+    # PointCloud a realsense_params.yaml-on keresztül van engedélyezve (config_file).
+    # Alap konfig visszaállításhoz: git checkout HEAD -- realsense-jetson/docker-compose.yml
     command: >-
       bash -c "export PATH=/opt/ros/jazzy/install/bin:$$PATH &&
       source /opt/ros/jazzy/setup.bash &&
       source /opt/realsense_ws/install/setup.bash &&
       ros2 launch realsense2_camera rs_launch.py
       initial_reset:=false
-      enable_color:=false
-      enable_rgbd:=false
-      align_depth.enable:=false
+      config_file:=/realsense_params.yaml
+      enable_color:=true
       enable_depth:=true
       enable_infra1:=true
       enable_infra2:=true
-      enable_accel:=true
-      enable_gyro:=true
-      unite_imu_method:=2
-      accel_fps:=250
-      gyro_fps:=400
-      enable_sync:=true
-      pointcloud.enable:=false
+      enable_accel:=false
+      enable_gyro:=false
+      enable_sync:=false
       depth_module.depth_profile:=640x480x30
       accelerate_gpu_with_glsl:=false"
