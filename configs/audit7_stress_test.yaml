@@ -1,0 +1,9 @@
+# Audit #7 Stress Test - RealSense RGB + Depth + PointCloud
+# A pointcloud.enable launch arg NEM mappolódik a plugin paraméterre (ismert bug).
+# Ezért a pointcloud__neon_.enable-t közvetlenül adjuk meg.
+/camera/camera:
+  ros__parameters:
+    pointcloud__neon_.enable: true
+    pointcloud__neon_.stream_filter: 2
+    pointcloud__neon_.stream_index_filter: 0
+    pointcloud__neon_.allow_no_texture_points: false

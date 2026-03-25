@@ -72,5 +72,5 @@ services:
       enable_accel:=false
       enable_gyro:=false
       enable_sync:=false
-      depth_module.depth_profile:=640x480x30
+      depth_module.depth_profile:=848x480x30
       accelerate_gpu_with_glsl:=false"

@@ -56,7 +56,7 @@ RUN cmake \
     -DBUILD_PYTHON_BINDINGS=OFF \
     -DBUILD_UNITY_BINDINGS=OFF \
     -DBUILD_WITH_CUDA=OFF \
-    -DBUILD_GLSL_EXTENSIONS=ON \
+    -DBUILD_GLSL_EXTENSIONS=OFF \
     -DBUILD_SHARED_LIBS=ON \
     -DCMAKE_INSTALL_PREFIX=/opt/rs-install
 
@@ -88,6 +88,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        ros-jazzy-tf2-ros \
        ros-jazzy-diagnostic-updater \
        python3-colcon-common-extensions \
+       # colcon-hoz kell: cmake + make + C++ compiler
+       build-essential cmake \
        # OpenMP runtime (fordításhoz és futáshoz egyaránt kell)
        libgomp1 \
        # GLSL build deps
@@ -127,7 +129,7 @@ RUN . /opt/ros/jazzy/setup.sh && \
             "-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG -march=native -fno-plt" \
             -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
             -DBUILD_WITH_OPENMP=ON \
-            -DBUILD_ACCELERATE_GPU_WITH_GLSL=ON
+            -DBUILD_ACCELERATE_GPU_WITH_GLSL=OFF
 
 
 # ─── Stage 3: Runtime ─────────────────────────────────────────────────────────
