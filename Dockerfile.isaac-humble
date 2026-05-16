@@ -1,0 +1,65 @@
+# Isaac ROS Humble — Heterogén stack (H4)
+# Base: nvcr.io/nvidia/l4t-jetpack:r36.4.0
+#   - Jetson Orin Nano + JetPack 6.x (L4T r36.4) kompatibilis
+#   - CUDA, cuDNN, TensorRT előre telepítve
+#   - PUBLIC NGC image, autentikáció nélkül elérhető
+#
+# Cél: NITROS-alapú GPU-pointcloud pipeline (Isaac ROS 3.2 / Humble) — Jazzy fő-stack érintetlen
+# DDS-bridge: cyclonedds (CYCLONEDDS_URI), shared host network
+#
+# Build:  docker compose -f docker-compose.isaac-humble.yml build
+# Start:  docker compose -f docker-compose.isaac-humble.yml up -d
+
+FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+SHELL ["/bin/bash", "-c"]
+
+# ── 1. Base tools ──────────────────────────────────────────────────────────────
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        gnupg \
+        lsb-release \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── 2. ROS 2 Humble apt repo + Isaac ROS apt repo ──────────────────────────────
+# Isaac ROS repo CRITICAL: component name `release-3.0` NOT `release-3.2`
+# (empirically verified 2026-05-16; InRelease declares legacy-release-3.0,
+#  legacy-release-3.1, release-3.0).
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list \
+    && curl -sSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+        | gpg --dearmor -o /usr/share/keyrings/isaac-ros-archive-keyring.gpg \
+    && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/isaac-ros-archive-keyring.gpg] https://isaac.download.nvidia.com/isaac-ros/release-3 jammy release-3.0" \
+        > /etc/apt/sources.list.d/isaac-ros.list
+
+# ── 3. ROS 2 Humble + RealSense (standard) + Isaac ROS NITROS csomagok ────────
+# ros-humble-realsense2-camera = standard Humble 4.57.7-4jammy (NOT Isaac fork 4.51.1)
+# ros-humble-isaac-ros-realsense = 57 KB launch fragment, 3.2.5-0jammy
+# ros-humble-isaac-ros-depth-image-proc = NITROS PointCloudXyzNode, 3.2.5-0jammy
+# ros-humble-isaac-ros-image-proc = NITROS ImageFormatConverterNode, 3.2.10-0jammy
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-humble-ros-base \
+        ros-humble-realsense2-camera \
+        ros-humble-isaac-ros-realsense \
+        ros-humble-isaac-ros-depth-image-proc \
+        ros-humble-isaac-ros-image-proc \
+        ros-humble-rclcpp-components \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── 4. Talicska launch/config mountpoints ─────────────────────────────────────
+RUN mkdir -p /opt/talicska/launch /opt/talicska/config
+
+ENV PATH="/opt/ros/humble/bin:${PATH}"
+ENV ROS_VERSION=2
+ENV ROS_DISTRO=humble
+
+WORKDIR /opt/talicska
+
+CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && ros2 launch /opt/talicska/launch/isaac_realsense.launch.py"]

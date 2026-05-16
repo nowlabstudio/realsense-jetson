@@ -1,0 +1,53 @@
+# Isaac ROS Humble heterogén stack — H4 (Trajectory Replay v2 → Isaac Humble)
+# Cél: NITROS GPU-pointcloud pipeline, Jazzy fő-stack érintetlen, DDS-bridge cyclonedds-szel
+#
+# Build:  docker compose -f docker-compose.isaac-humble.yml build
+# Start:  docker compose -f docker-compose.isaac-humble.yml up -d
+# Logs:   docker compose -f docker-compose.isaac-humble.yml logs -f ros2-realsense-isaac
+
+services:
+
+  ros2-realsense-isaac:
+    image: ros2-realsense:humble-isaac-3.2-talicska
+    build:
+      context: .
+      dockerfile: Dockerfile.isaac-humble
+    container_name: ros2_realsense_isaac
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    restart: unless-stopped
+    privileged: true
+    shm_size: 2gb    # NITROS zero-copy buffers
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      - /dev/video4:/dev/video4
+      - /dev/video5:/dev/video5
+      - /dev/hidraw0:/dev/hidraw0
+      - /dev/hidraw1:/dev/hidraw1
+      - /dev/hidraw2:/dev/hidraw2
+      - /dev/hidraw3:/dev/hidraw3
+      - /dev/hidraw4:/dev/hidraw4
+      - /dev/hidraw5:/dev/hidraw5
+      - /dev/hidraw6:/dev/hidraw6
+    volumes:
+      - /run/udev:/run/udev:ro
+      - ../talicska-robot/cyclonedds.xml:/cyclonedds.xml:ro
+      - ./launch:/opt/talicska/launch:ro
+      - ./realsense_params.yaml:/opt/talicska/config/realsense_params.yaml:ro
+    group_add:
+      - video
+      - plugdev
+      - "101"    # input group (hidraw hozzáférés)
+    ulimits:
+      rtprio: 99       # USB transfer threadek real-time prioritáshoz
+      memlock: -1      # memory lock korlát feloldva
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - CYCLONEDDS_URI=file:///cyclonedds.xml
+      - NVIDIA_VISIBLE_DEVICES=all
