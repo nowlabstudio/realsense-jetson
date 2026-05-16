@@ -12,6 +12,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.isaac-humble
+      network: host  # buildkit DNS resolve fix (ports.ubuntu.com nem érhető el a default bridge namespace-ben)
     container_name: ros2_realsense_isaac
     runtime: nvidia
     network_mode: host
@@ -38,7 +39,7 @@ services:
       - /run/udev:/run/udev:ro
       - ../talicska-robot/cyclonedds.xml:/cyclonedds.xml:ro
       - ./launch:/opt/talicska/launch:ro
-      - ./realsense_params.yaml:/opt/talicska/config/realsense_params.yaml:ro
+      - ./realsense_params.isaac.yaml:/opt/talicska/config/realsense_params.yaml:ro
     group_add:
       - video
       - plugdev

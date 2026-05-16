@@ -1,0 +1,14 @@
+# H5 fix debug override: container indul `sleep infinity`-vel, hogy in-container
+# telepíthessünk csomagokat (isaac-ros-examples, CV-CUDA) és próbálhassuk a
+# stock NVIDIA launch-okat manuálisan.
+#
+# Használat:
+#   docker compose -f docker-compose.isaac-humble.yml -f docker-compose.isaac-humble.debug.yml up -d
+#   docker exec -it ros2_realsense_isaac bash
+#
+# Cleanup (debug után):
+#   docker compose -f docker-compose.isaac-humble.yml -f docker-compose.isaac-humble.debug.yml down
+
+services:
+  ros2-realsense-isaac:
+    command: ["bash", "-c", "sleep infinity"]

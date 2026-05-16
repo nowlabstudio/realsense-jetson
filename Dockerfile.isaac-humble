@@ -16,13 +16,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 SHELL ["/bin/bash", "-c"]
 
-# ── 1. Base tools ──────────────────────────────────────────────────────────────
+# ── 1. Base tools + build deps a librealsense source-buildhez ────────────────
+# A Jetson L4T kernel NEM tartalmazza a hid_sensor_custom modult → kernel UVC
+# backend nem működik. RSUSB backend (libusb) kell, ami source-buildet kíván.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         gnupg \
         lsb-release \
         ca-certificates \
+        git \
+        cmake \
+        build-essential \
+        pkg-config \
+        libusb-1.0-0-dev \
+        libssl-dev \
+        libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── 2. ROS 2 Humble apt repo + Isaac ROS apt repo ──────────────────────────────
@@ -38,22 +47,120 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
     && echo "deb [arch=arm64 signed-by=/usr/share/keyrings/isaac-ros-archive-keyring.gpg] https://isaac.download.nvidia.com/isaac-ros/release-3 jammy release-3.0" \
         > /etc/apt/sources.list.d/isaac-ros.list
 
-# ── 3. ROS 2 Humble + RealSense (standard) + Isaac ROS NITROS csomagok ────────
-# ros-humble-realsense2-camera = standard Humble 4.57.7-4jammy (NOT Isaac fork 4.51.1)
+# ── 3. ROS 2 Humble + Isaac ROS NITROS csomagok ─────────────────────────────
+# KRITIKUS (2026-05-16 build-fail H5-v7→v8): A standard `ros-humble-realsense2-
+# camera` apt-csomag (4.57.7-4jammy) DEPENDS-eli a `ros-humble-librealsense2`
+# (2.57.7) csomagot. Ez a 2.57.7 install létrehozza a `/opt/ros/humble/lib/
+# aarch64-linux-gnu/cmake/realsense2/realsense2Targets*.cmake` fájlokat
+# referenciaként a 2.57.7 .so-kra. A későbbi librealsense 2.56.4 source install
+# NEM tudja felülírni a fő `realsense2Targets.cmake`-et — colcon
+# `find_package(realsense2)` fail-el "but not all the files it references".
+#
+# Megoldás: NE installáld az apt-féle realsense2-camera-t. Az Isaac fork colcon
+# build (6. lépés) overlay-ben generálja a saját realsense2_camera + msgs
+# package-eket. A `ros-humble-isaac-ros-realsense` apt-csomag csak 57KB launch
+# fragment (`Depends: ros-humble-isaac-ros-depth-image-proc`), NEM dep-eli a
+# realsense2-camera-t — verified `apt-cache depends`.
+#
 # ros-humble-isaac-ros-realsense = 57 KB launch fragment, 3.2.5-0jammy
 # ros-humble-isaac-ros-depth-image-proc = NITROS PointCloudXyzNode, 3.2.5-0jammy
 # ros-humble-isaac-ros-image-proc = NITROS ImageFormatConverterNode, 3.2.10-0jammy
+# ros-humble-isaac-ros-examples = launch aggregator, 3.2.5-0jammy
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ros-humble-ros-base \
-        ros-humble-realsense2-camera \
+        ros-humble-rmw-cyclonedds-cpp \
         ros-humble-isaac-ros-realsense \
         ros-humble-isaac-ros-depth-image-proc \
         ros-humble-isaac-ros-image-proc \
+        ros-humble-isaac-ros-managed-nitros \
+        ros-humble-isaac-ros-examples \
         ros-humble-rclcpp-components \
+        ros-humble-diagnostic-updater \
+        ros-humble-cv-bridge \
+        ros-humble-image-transport \
+        python3-colcon-common-extensions \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 4. Talicska launch/config mountpoints ─────────────────────────────────────
+# ── 4. librealsense2 source build (RSUSB backend, Jetson-kompatibilis) ───────
+# Verzió: **v2.56.4** — root-cause fix 2026-05-16-án: a 2.55.1 RSUSB build
+# JP6 r36.4-on instabil (control_transfer EAGAIN folyamatos, 0 frame jön a
+# stream nyitásakor). A 2.56.4 stabil (a Jazzy stack ugyanezen kamerán 2.56.4-
+# tel 30 Hz depth-et publikált; cross-validate baseline).
+# Az Isaac fork 4.51.1-isaac CMakeLists `find_package(realsense2 2.51.1)` =
+# MINIMUM 2.51.1 → 2.56.4-tel forward-kompatibilis (verified colcon rebuild
+# PASS 2026-05-16, NEEDED librealsense2.so.2.56).
+# RSUSB backend kötelező (L4T kernel hid_sensor_custom modul hiányzik).
+#
+# KRITIKUS: az install prefix /opt/ros/humble (NEM /usr/local), hogy a CMake
+# config (librealsense2-config.cmake) FELÜLÍRJA az apt-féle 2.57.7 configot.
+# A CMAKE_PREFIX_PATH-ban a /opt/ros/humble elsőbbséget kap a colcon-tól.
+# Build idő: ~15-20 perc Orin Nano 6-mag CPU-n.
+ARG LIBREALSENSE_VERSION=v2.56.4
+RUN git clone --depth 1 -b ${LIBREALSENSE_VERSION} \
+        https://github.com/IntelRealSense/librealsense.git /tmp/librealsense \
+    && cd /tmp/librealsense && mkdir build && cd build \
+    && cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DFORCE_RSUSB_BACKEND=ON \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_GRAPHICAL_EXAMPLES=OFF \
+        -DBUILD_PYTHON_BINDINGS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/opt/ros/humble \
+        -DCMAKE_INSTALL_LIBDIR=lib/aarch64-linux-gnu \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /tmp/librealsense
+
+# ── 5. Verify librealsense 2.56.4 install + add ld.so.conf entry ──────────────
+# A 3-as lépésben már NEM installáltuk az apt-féle librealsense2-t, ezért a
+# 4-es source install tiszta state-ben gondskodott a `/opt/ros/humble/lib/
+# aarch64-linux-gnu/cmake/realsense2/`-ról. A `/opt/ros/humble/lib/aarch64-
+# linux-gnu` NEM alapértelmezett ld.so path → buildtime-ban a `rs-fw-update`
+# `.so` not found. Runtime-ban a ROS setup.bash adja hozzá az LD_LIBRARY_PATH-
+# hoz. Buildtime verify-höz ld.so.conf-ot is adunk a robusztusság érdekében.
+RUN echo "/opt/ros/humble/lib/aarch64-linux-gnu" > /etc/ld.so.conf.d/ros-humble.conf \
+    && ldconfig \
+    && ls -la /opt/ros/humble/lib/aarch64-linux-gnu/librealsense2.so* \
+    && ls /opt/ros/humble/lib/aarch64-linux-gnu/cmake/realsense2/ \
+    && ldconfig -p | grep librealsense2
+
+# ── 6. Isaac fork realsense-ros 4.51.1-isaac source build (NITROS-tagged) ────
+# A standard apt ros-humble-realsense2-camera 4.57.7 NEM publikál NITROS-tagged
+# topic-okat, ezért a NITROS PointCloudXyzNode GXF_INVALID_DATA_FORMAT-ot dob.
+# Az Isaac fork (NVIDIA-ISAAC-ROS/realsense-ros release/4.51.1-isaac) NITROS-
+# natívan publikál → NITROS pipeline működik. Overlay-ként build-eljük /opt/
+# realsense_ws-be, a CMD source-olja és shadow-olja az apt-installtat.
+# Build idő: ~10-15 perc colcon (a 4.51.1-isaac kisebb codebase mint a libusb).
+ARG ISAAC_REALSENSE_ROS_BRANCH=release/4.51.1-isaac
+RUN mkdir -p /opt/realsense_ws/src \
+    && git clone --depth 1 -b ${ISAAC_REALSENSE_ROS_BRANCH} \
+        https://github.com/NVIDIA-ISAAC-ROS/realsense-ros.git \
+        /opt/realsense_ws/src/realsense-ros \
+    && cd /opt/realsense_ws \
+    && bash -c "source /opt/ros/humble/setup.bash \
+        && colcon build --merge-install --install-base /opt/realsense_ws/install \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release" \
+    && rm -rf /opt/realsense_ws/build /opt/realsense_ws/log
+
+# ── 6b. CV-CUDA library — kötelező a NITROS ConvertMetricNode dlopen-éhez ────
+# A `ros-humble-isaac-ros-depth-image-proc` NITROS pipeline futás közben
+# `libcvcuda.so.0`-t kér. Az Isaac apt repo NEM tartalmazza, külön telepítés
+# kell GitHub release-ről (CVCUDA/CV-CUDA v0.16.0 cuda12 aarch64). A dpkg
+# install ldconfig-fal végződik, a `/opt/nvidia/cvcuda0/lib` automatikusan
+# bekerül az ld cache-be.
+#
+# Verzió-mátrix:
+#   CV-CUDA v0.16.0 (2025) → CUDA 12 (matches l4t-jetpack r36.4.0 CUDA 12.6)
+#                          → aarch64 (matches Orin Nano)
+ARG CVCUDA_VERSION=0.16.0
+RUN curl -sLO https://github.com/CVCUDA/CV-CUDA/releases/download/v${CVCUDA_VERSION}/cvcuda-lib-${CVCUDA_VERSION}-cuda12-aarch64-linux.deb \
+    && dpkg -i cvcuda-lib-${CVCUDA_VERSION}-cuda12-aarch64-linux.deb \
+    && rm -f cvcuda-lib-${CVCUDA_VERSION}-cuda12-aarch64-linux.deb \
+    && ldconfig \
+    && ldconfig -p | grep cvcuda
+
+# ── 7. Talicska launch/config mountpoints ─────────────────────────────────────
 RUN mkdir -p /opt/talicska/launch /opt/talicska/config
 
 ENV PATH="/opt/ros/humble/bin:${PATH}"
@@ -62,4 +169,5 @@ ENV ROS_DISTRO=humble
 
 WORKDIR /opt/talicska
 
-CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && ros2 launch /opt/talicska/launch/isaac_realsense.launch.py"]
+# CMD: source humble base + Isaac fork overlay (overlay precedence), then launch
+CMD ["bash", "-c", "source /opt/ros/humble/setup.bash && source /opt/realsense_ws/install/setup.bash && ros2 launch /opt/talicska/launch/isaac_realsense.launch.py"]

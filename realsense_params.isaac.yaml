@@ -1,0 +1,35 @@
+# Isaac NITROS RealSense D435i — talicska-specifikus paraméter override
+#
+# Az NVIDIA stock `realsense_mono_depth.yaml` 15 fps profile-t használ; mi
+# 30 fps-re bumpoljuk, hogy a NITROS pointcloud rate elérje a H6 PASS-küszöböt
+# (25 Hz). USB 3.2 SuperSpeed bandwidth bőven van (depth+color+emitter ~370Mbps
+# vs 5 Gbps elérhető).
+#
+# IMU explicit disable: a "Motion Module force pause" hardware error az IMU
+# stream-mel kapcsolatos (D435i FW 5.17.0.10 + Isaac fork). A NITROS pointcloud
+# pipeline-nak NEM kell IMU; a Jazzy main-stack a BNO085-öt használja az EKF-hez.
+#
+# Stock NVIDIA baseline (override-eljük):
+#   rgb_camera.profile: '640x480x15'   → '640x480x30'
+#   depth_module.profile: '640x480x15' → '640x480x30'
+#   depth_module.emitter_enabled: 0    → 1 (jobb depth + IR projector)
+
+rgb_camera:
+  profile: '640x480x30'
+color_qos: "SYSTEM_DEFAULT"
+
+depth_module:
+  profile: '640x480x30'
+  emitter_enabled: 1
+  emitter_on_off: false
+depth_qos: "SYSTEM_DEFAULT"
+depth_info_qos: "SYSTEM_DEFAULT"
+
+enable_infra1: false
+enable_infra2: false
+
+# IMU disable (motion module force pause elkerülése)
+enable_accel: false
+enable_gyro: false
+
+align_depth.enable: true
