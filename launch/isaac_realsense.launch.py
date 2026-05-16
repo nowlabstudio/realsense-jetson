@@ -43,6 +43,12 @@ def generate_launch_description():
             'config', 'realsense_mono_depth.yaml'
         )
 
+    # 2026-05-16-i kísérlet: use_intra_process_comms=True INKOMPATIBILIS a
+    # NITROS managed_nitros-szal — a NITROS-pipeline (convert_metric +
+    # point_cloud_xyz) NEM indul el, /depth és /camera/depth/points topicok
+    # eltűnnek. A NITROS managed_nitros saját zero-copy IPC-t használ, az
+    # rclcpp intra-process-szel ütközik. Visszaállítva no-intra-process-re.
+
     realsense_node = ComposableNode(
         package='realsense2_camera',
         plugin='realsense2_camera::RealSenseNodeFactory',
