@@ -69,8 +69,8 @@ services:
       enable_depth:=true
       enable_infra1:=true
       enable_infra2:=true
-      enable_accel:=false
-      enable_gyro:=false
+      enable_accel:=true
+      enable_gyro:=true
       enable_sync:=false
       depth_module.depth_profile:=848x480x30
       accelerate_gpu_with_glsl:=false"

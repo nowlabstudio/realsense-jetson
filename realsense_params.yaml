@@ -27,5 +27,5 @@ pointcloud__neon_.ordered_pc: false
 pointcloud__neon_.stream_filter: 2
 pointcloud__neon_.stream_index_filter: 0
 pointcloud__neon_.allow_no_texture_points: false
-enable_accel: false
-enable_gyro: false
+enable_accel: true
+enable_gyro: true
