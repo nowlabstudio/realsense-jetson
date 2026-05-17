@@ -86,7 +86,7 @@ def generate_launch_description():
         ],
     )
 
-    # VH1 (2026-05-17): cuVSLAM stereo PoC. IMU-OFF (enable_imu_fusion: False).
+    # VH2 (2026-05-17): cuVSLAM stereo-inertial. IMU fusion ENABLE (D435i /imu 200 Hz).
     # Frame-szabályok: output_frame=camera_odom (NEM map), publish_map_to_odom_tf
     # =false → slam_toolbox marad master a map-frame-en.
     visual_slam_node = ComposableNode(
@@ -97,14 +97,14 @@ def generate_launch_description():
             'use_sim_time': False,
             'denoise_input_images': False,
             'rectified_images': True,
-            'enable_imu_fusion': False,
+            'enable_imu_fusion': True,
             'gyro_noise_density': 0.000244,
             'gyro_random_walk': 0.000019393,
             'accel_noise_density': 0.001862,
             'accel_random_walk': 0.003,
             'map_frame': 'map',
             'odom_frame': 'camera_odom',
-            'base_frame': 'camera_link',
+            'base_frame': 'camera_infra1_optical_frame',
             'imu_frame': 'camera_gyro_optical_frame',
             'enable_localization_n_mapping': True,
             'publish_odom_to_base_tf': True,
