@@ -86,6 +86,39 @@ def generate_launch_description():
         ],
     )
 
+    # VH1 (2026-05-17): cuVSLAM stereo PoC. IMU-OFF (enable_imu_fusion: False).
+    # Frame-szabályok: output_frame=camera_odom (NEM map), publish_map_to_odom_tf
+    # =false → slam_toolbox marad master a map-frame-en.
+    visual_slam_node = ComposableNode(
+        package='isaac_ros_visual_slam',
+        plugin='nvidia::isaac_ros::visual_slam::VisualSlamNode',
+        name='visual_slam',
+        parameters=[{
+            'use_sim_time': False,
+            'denoise_input_images': False,
+            'rectified_images': True,
+            'enable_imu_fusion': False,
+            'gyro_noise_density': 0.000244,
+            'gyro_random_walk': 0.000019393,
+            'accel_noise_density': 0.001862,
+            'accel_random_walk': 0.003,
+            'map_frame': 'map',
+            'odom_frame': 'camera_odom',
+            'base_frame': 'camera_link',
+            'imu_frame': 'camera_gyro_optical_frame',
+            'enable_localization_n_mapping': True,
+            'publish_odom_to_base_tf': True,
+            'publish_map_to_odom_tf': False,
+        }],
+        remappings=[
+            ('visual_slam/image_0', '/infra1/image_rect_raw'),
+            ('visual_slam/camera_info_0', '/infra1/camera_info'),
+            ('visual_slam/image_1', '/infra2/image_rect_raw'),
+            ('visual_slam/camera_info_1', '/infra2/camera_info'),
+            ('visual_slam/imu', '/imu'),
+        ],
+    )
+
     container = ComposableNodeContainer(
         name='isaac_realsense_container',
         namespace='',
@@ -95,6 +128,7 @@ def generate_launch_description():
             realsense_node,
             convert_metric_node,
             point_cloud_xyz_node,
+            visual_slam_node,
         ],
         output='screen',
         emulate_tty=True,

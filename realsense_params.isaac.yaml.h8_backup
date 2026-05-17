@@ -20,19 +20,16 @@ color_qos: "SYSTEM_DEFAULT"
 
 depth_module:
   profile: '640x480x30'
-  emitter_enabled: 0    # VH1 (cuVSLAM): emitter OFF; IR-pattern interfere a stereo feature-tracking-gel
+  emitter_enabled: 1
   emitter_on_off: false
 depth_qos: "SYSTEM_DEFAULT"
 depth_info_qos: "SYSTEM_DEFAULT"
 
-enable_infra1: true     # VH1: cuVSLAM stereo bal IR
-enable_infra2: true     # VH1: cuVSLAM stereo jobb IR
+enable_infra1: false
+enable_infra2: false
 
-# I3 (2026-05-17): IMU enable a jitter méréshez. A 11 napos "kamera-fagy" fact
-# az Intel-stackben I2-vel megdőlt (freeze_events=0, 30 perc PASS) — Isaac
-# stackben újra-verifikáljuk passzív monitorozással.
-enable_accel: true
-enable_gyro: true
-unite_imu_method: 2   # 0=NONE (separate topics), 1=COPY, 2=LINEAR_INTERP → /imu/data ~200Hz
+# IMU disable (motion module force pause elkerülése)
+enable_accel: false
+enable_gyro: false
 
 align_depth.enable: true
